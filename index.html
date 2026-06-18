@@ -134,6 +134,22 @@
       return null;
     }
 
+    // Menor número = más relevante (lo que el usuario quiere ver primero)
+    function relevance(f) {
+      const s = (f.status || "").toLowerCase();
+      if (getLatLon(f.location)) return 0;                 // en el aire AHORA
+      if (s.includes("arrived") || s.includes("landed") || s.includes("cancel")) return 3; // ya pasó
+      if (/(enroute|departed|boarding|expected|approach|checkin|scheduled|delay)/.test(s)) return 1; // por venir
+      return 2;
+    }
+
+    // Distancia (ms) entre la salida del vuelo y ahora — para desempatar
+    function timeDist(f) {
+      const t = f.departure?.scheduledTime?.utc || f.departure?.scheduledTime?.local;
+      if (!t) return Infinity;
+      return Math.abs(new Date(t.replace(" ", "T")) - new Date());
+    }
+
     function drawMap(f, mapDiv) {
       const dep = f.departure?.airport;
       const arr = f.arrival?.airport;
@@ -169,7 +185,13 @@
         mapLayers.push(L.polyline([depPos, arrPos], { color: "#64748b", weight: 2, dashArray: "6 8" }).addTo(map));
       }
       if (livePos) {
-        const icon = L.divIcon({ className: "plane-icon", html: "✈️", iconSize: [22, 22] });
+        // El emoji ✈️ apunta al NE (~45°); lo roto para que mire al rumbo real
+        const deg = (f.location?.trueTrack?.deg ?? 45) - 45;
+        const icon = L.divIcon({
+          className: "plane-icon",
+          html: `<div style="transform:rotate(${deg}deg)">✈️</div>`,
+          iconSize: [22, 22],
+        });
         mapLayers.push(L.marker(livePos, { icon }).bindTooltip("En vuelo").addTo(map));
         pts.push(livePos);
       }
@@ -179,12 +201,19 @@
       setTimeout(() => map.invalidateSize(), 100);
     }
 
-    function render(f) {
+    function render(f, showMap) {
       const dep = f.departure || {};
       const arr = f.arrival || {};
       const ac = f.aircraft || {};
       const al = f.airline || {};
       const dist = f.greatCircleDistance;
+      const loc = f.location;
+      const speed = loc?.groundSpeed?.kmPerHour;
+      const altF = loc?.altitude?.feet;
+      const alt = (altF && altF > 0) ? altF : loc?.pressureAltitude?.feet;
+      const liveHtml = loc ? `
+          <div class="field"><div class="label">Velocidad</div><div class="value">${speed ? Math.round(speed) + " km/h" : "—"}</div></div>
+          <div class="field"><div class="label">Altitud</div><div class="value">${alt ? Math.round(alt).toLocaleString("es-AR") + " ft" : "—"}</div></div>` : "";
 
       const card = document.createElement("div");
       card.className = "card";
@@ -215,12 +244,12 @@
           <div class="field"><div class="label">Terminal llegada</div><div class="value">${arr.terminal || "—"} / Gate ${arr.gate || "—"}</div></div>
           <div class="field"><div class="label">Avión</div><div class="value">${ac.model || "—"}</div></div>
           <div class="field"><div class="label">Matrícula</div><div class="value">${ac.reg || "—"}</div></div>
+          ${liveHtml}
           ${dist ? `<div class="field full"><div class="label">Distancia</div><div class="value">${Math.round(dist.km)} km</div></div>` : ""}
         </div>`;
       result.appendChild(card);
 
-      // El mapa solo para el primer vuelo (el más relevante)
-      if (!map || result.children.length === 1) {
+      if (showMap) {
         const slot = card.querySelector(".map-slot");
         const mapDiv = document.createElement("div");
         mapDiv.id = "map";
@@ -248,8 +277,11 @@
         const list = Array.isArray(data) ? data : [data];
         if (!list.length) { result.innerHTML = `<p class="msg">Sin resultados para ${flight}.</p>`; return; }
 
+        // El vuelo más relevante (en vuelo / próximo) va primero; los pasados después
+        list.sort((a, b) => relevance(a) - relevance(b) || timeDist(a) - timeDist(b));
+
         result.innerHTML = "";
-        list.forEach(render);
+        list.forEach((f, i) => render(f, i === 0));
       } catch (err) {
         result.innerHTML = `<p class="msg error">${err.message}</p>`;
       } finally {
