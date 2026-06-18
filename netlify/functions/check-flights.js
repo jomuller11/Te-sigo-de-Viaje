@@ -60,15 +60,15 @@ async function fetchLeg(flight, date) {
 async function diffAndNotify(w, leg) {
   const prev = w.state || {};
   const cur = snapshot(leg);
-  const mails = [];
+  const msgs = [];
 
   if (w.events.includes("departure") && !w.notified.departure && hasDeparted(leg)) {
-    mails.push(emailDeparted(w, leg));
+    msgs.push(msgDeparted(w, leg));
     w.notified.departure = true;
   }
 
   if (w.events.includes("arrival") && !w.notified.arrival && isArrived(leg)) {
-    mails.push(emailArrived(w, leg));
+    msgs.push(msgArrived(w, leg));
     w.notified.arrival = true;
   }
 
@@ -82,11 +82,11 @@ async function diffAndNotify(w, leg) {
       changes.push(`Cambió la puerta de salida: ${cur.depGate}`);
     if (prev.status && cur.status && prev.status !== cur.status)
       changes.push(`Estado: ${cur.status}`);
-    if (changes.length) mails.push(emailChanges(w, leg, changes));
+    if (changes.length) msgs.push(msgChanges(w, leg, changes));
   }
 
   w.state = cur;
-  for (const m of mails) await sendEmail(w.email, m.subject, m.html);
+  for (const m of msgs) await notify(w, m);
 }
 
 function snapshot(leg) {
@@ -119,10 +119,25 @@ function nextInterval(leg, now) {
 function ts(s) { return s ? new Date(s.replace(" ", "T")).getTime() : null; }
 function fmt(s) { try { return new Date(s.replace(" ", "T")).toLocaleString("es-AR"); } catch { return s; } }
 
-// --- Email (Resend) ---
+// --- Envío (Telegram y/o email) ---
+async function notify(w, m) {
+  if (w.chatId && process.env.TELEGRAM_BOT_TOKEN) await sendTelegram(w.chatId, m.text);
+  if (w.email && process.env.RESEND_API_KEY) await sendEmail(w.email, m.subject, m.html);
+}
+
+async function sendTelegram(chatId, text) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true }),
+  });
+  if (!res.ok) console.log("Error Telegram:", res.status, await res.text());
+}
+
 async function sendEmail(to, subject, html) {
   const key = process.env.RESEND_API_KEY;
-  if (!key) { console.log("Falta RESEND_API_KEY"); return; }
+  if (!key) return;
   const from = process.env.MAIL_FROM || "Te sigo de Viaje <onboarding@resend.dev>";
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -132,14 +147,32 @@ async function sendEmail(to, subject, html) {
   if (!res.ok) console.log("Error enviando email:", res.status, await res.text());
 }
 
-function emailDeparted(w, leg) {
-  return { subject: `✈️ Despegó ${w.flight}`, html: tpl(leg, `Tu vuelo <b>${w.flight}</b> despegó.`) };
+// Cada builder devuelve { subject, html (email), text (Telegram) }
+function route(leg) {
+  const dep = leg.departure?.airport, arr = leg.arrival?.airport;
+  return `${dep?.iata || "?"} → ${arr?.iata || "?"}`;
 }
-function emailArrived(w, leg) {
-  return { subject: `🛬 Aterrizó ${w.flight}`, html: tpl(leg, `Tu vuelo <b>${w.flight}</b> aterrizó en ${leg.arrival?.airport?.name || "destino"}.`) };
+function msgDeparted(w, leg) {
+  return {
+    subject: `✈️ Despegó ${w.flight}`,
+    text: `✈️ <b>Despegó ${w.flight}</b>\n${route(leg)}`,
+    html: tpl(leg, `Tu vuelo <b>${w.flight}</b> despegó.`),
+  };
 }
-function emailChanges(w, leg, changes) {
-  return { subject: `🔔 Cambios en ${w.flight}`, html: tpl(leg, `Hubo cambios en tu vuelo <b>${w.flight}</b>:<ul>${changes.map((c) => `<li>${c}</li>`).join("")}</ul>`) };
+function msgArrived(w, leg) {
+  const dest = leg.arrival?.airport?.name || "destino";
+  return {
+    subject: `🛬 Aterrizó ${w.flight}`,
+    text: `🛬 <b>Aterrizó ${w.flight}</b>\n${route(leg)}\nEn ${dest}`,
+    html: tpl(leg, `Tu vuelo <b>${w.flight}</b> aterrizó en ${dest}.`),
+  };
+}
+function msgChanges(w, leg, changes) {
+  return {
+    subject: `🔔 Cambios en ${w.flight}`,
+    text: `🔔 <b>Cambios en ${w.flight}</b>\n${route(leg)}\n` + changes.map((c) => `• ${c}`).join("\n"),
+    html: tpl(leg, `Hubo cambios en tu vuelo <b>${w.flight}</b>:<ul>${changes.map((c) => `<li>${c}</li>`).join("")}</ul>`),
+  };
 }
 function tpl(leg, body) {
   const dep = leg.departure?.airport, arr = leg.arrival?.airport;

@@ -87,8 +87,10 @@
 
     .alertbox { margin-top: 18px; padding: 16px; background: var(--card2); border-radius: 10px; }
     .alert-title { font-weight: 600; margin-bottom: 4px; }
-    .alert-sub { color: var(--muted); font-size: 0.8rem; margin-bottom: 12px; }
-    .alertbox input[type=email] { width: 100%; margin-bottom: 12px; }
+    .alert-sub { color: var(--muted); font-size: 0.8rem; margin-bottom: 12px; line-height: 1.4; }
+    .al-chatrow { display: flex; gap: 8px; margin-bottom: 12px; }
+    .al-chat { flex: 1; min-width: 0; }
+    .al-detect { background: var(--card); color: var(--text); border: 1px solid var(--muted); padding: 0 14px; }
     .al-evs { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 12px; }
     .al-ev { display: inline-flex; align-items: center; gap: 6px; font-size: 0.88rem; color: var(--text); cursor: pointer; }
     .al-msg { margin-top: 10px; font-size: 0.85rem; min-height: 1em; }
@@ -338,15 +340,19 @@
       }
     }
 
-    // Bloque "Avisarme por email" — registra el vuelo en el backend
+    // Bloque "Avisarme por Telegram" — registra el vuelo en el backend
     function attachAlertBox(card, f) {
       const depDate = (f.departure?.scheduledTime?.local || "").slice(0, 10); // YYYY-MM-DD
+      const savedChat = localStorage.getItem("tg_chat_id") || "";
       const box = document.createElement("div");
       box.className = "alertbox";
       box.innerHTML = `
-        <div class="alert-title">🔔 Avisarme por email</div>
-        <div class="alert-sub">Te mandamos un mail cuando pase lo que elijas. Funciona aunque cierres la web.</div>
-        <input type="email" class="al-email" placeholder="tu@email.com" />
+        <div class="alert-title">🔔 Avisarme por Telegram</div>
+        <div class="alert-sub">Te llega un mensaje al celular cuando pase lo que elijas, aunque cierres la web. Abrí tu bot y apretá <b>Start</b>, después tocá "Detectar".</div>
+        <div class="al-chatrow">
+          <input class="al-chat" placeholder="Tu chat ID de Telegram" value="${savedChat}" />
+          <button class="al-detect" type="button">Detectar</button>
+        </div>
         <div class="al-evs">
           <label class="al-ev"><input type="checkbox" value="departure" checked> Despegue</label>
           <label class="al-ev"><input type="checkbox" value="arrival" checked> Aterrizaje</label>
@@ -356,21 +362,44 @@
         <div class="al-msg"></div>`;
       card.appendChild(box);
 
-      const btn = box.querySelector(".al-go");
+      const chatInput = box.querySelector(".al-chat");
       const msg = box.querySelector(".al-msg");
+      const btn = box.querySelector(".al-go");
+      const detectBtn = box.querySelector(".al-detect");
+
+      detectBtn.addEventListener("click", async () => {
+        detectBtn.disabled = true;
+        msg.textContent = "Buscando tu chat..."; msg.className = "al-msg";
+        try {
+          const res = await fetch("/api/telegram-chatid");
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Error " + res.status);
+          chatInput.value = data.chatId;
+          localStorage.setItem("tg_chat_id", data.chatId);
+          msg.textContent = `✅ Detectado${data.name ? " (" + data.name + ")" : ""}`;
+          msg.className = "al-msg ok";
+        } catch (e) {
+          msg.textContent = e.message;
+          msg.className = "al-msg error";
+        } finally {
+          detectBtn.disabled = false;
+        }
+      });
+
       btn.addEventListener("click", async () => {
-        const email = box.querySelector(".al-email").value.trim();
+        const chatId = chatInput.value.trim();
         const events = [...box.querySelectorAll(".al-ev input:checked")].map((c) => c.value);
-        if (!email) { msg.textContent = "Poné tu email."; msg.className = "al-msg error"; return; }
+        if (!chatId) { msg.textContent = "Falta tu chat ID (tocá Detectar)."; msg.className = "al-msg error"; return; }
         if (!events.length) { msg.textContent = "Elegí al menos un evento."; msg.className = "al-msg error"; return; }
 
+        localStorage.setItem("tg_chat_id", chatId);
         btn.disabled = true;
         msg.textContent = "Guardando..."; msg.className = "al-msg";
         try {
           const res = await fetch("/api/watch", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ flight: currentFlightNum, date: depDate, email, events }),
+            body: JSON.stringify({ flight: currentFlightNum, date: depDate, chatId, events }),
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || "Error " + res.status);

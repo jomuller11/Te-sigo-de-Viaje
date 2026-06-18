@@ -1,4 +1,5 @@
-// Registra un vuelo + email para que el cron lo vigile y avise por mail.
+// Registra un vuelo + destino (Telegram y/o email) para que el cron lo
+// vigile y avise cuando despega, aterriza o hay cambios.
 import { getStore } from "@netlify/blobs";
 
 export default async (req) => {
@@ -8,17 +9,20 @@ export default async (req) => {
   try { body = await req.json(); } catch { return json(400, { error: "JSON inválido" }); }
 
   const flight = (body.flight || "").trim().toUpperCase();
-  const date = (body.date || "").trim(); // YYYY-MM-DD (fecha local de salida de la pata)
-  const email = (body.email || "").trim();
+  const date = (body.date || "").trim();            // YYYY-MM-DD (salida local de la pata)
+  const chatId = (body.chatId ?? "").toString().trim(); // Telegram
+  const email = (body.email || "").trim();          // opcional
   const events = Array.isArray(body.events) ? body.events : [];
 
   if (!flight) return json(400, { error: "Falta el número de vuelo." });
-  if (!/.+@.+\..+/.test(email)) return json(400, { error: "Email inválido." });
+  if (!chatId && !email) return json(400, { error: "Falta un destino (Telegram o email)." });
+  if (email && !/.+@.+\..+/.test(email)) return json(400, { error: "Email inválido." });
   if (!events.length) return json(400, { error: "Elegí al menos un evento." });
 
-  const id = `${flight}__${date || "next"}__${email}`.replace(/[^a-zA-Z0-9_@.\-]/g, "_");
+  const dest = chatId || email;
+  const id = `${flight}__${date || "next"}__${dest}`.replace(/[^a-zA-Z0-9_@.\-]/g, "_");
   const watch = {
-    id, flight, date, email, events,
+    id, flight, date, chatId, email, events,
     createdAt: new Date().toISOString(),
     state: null,        // último snapshot conocido (para detectar cambios)
     notified: {},       // qué eventos ya avisamos (despegue/aterrizaje)
@@ -28,7 +32,7 @@ export default async (req) => {
   const store = getStore("watches");
   await store.setJSON(id, watch);
 
-  return json(200, { ok: true, message: "Listo, te vamos a avisar por email." });
+  return json(200, { ok: true, message: "Listo, te vamos a avisar por Telegram." });
 };
 
 function json(status, obj) {
