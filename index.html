@@ -106,6 +106,8 @@
     const $ = (id) => document.getElementById(id);
     const result = $("result");
     let map, mapLayers = [];
+    let planeMarker = null, liveState = null, animTimer = null, refreshTimer = null;
+    const REFRESH_MS = 120000; // corrige con la posición real cada 2 min (cuida la cuota)
 
     function statusColor(s) {
       const t = (s || "").toLowerCase();
@@ -150,6 +152,77 @@
       return Math.abs(new Date(t.replace(" ", "T")) - new Date());
     }
 
+    // Ícono del avión rotado hacia su rumbo (el emoji ✈️ mira al NE, ~45°)
+    function planeIcon(headingDeg) {
+      const rot = (headingDeg ?? 45) - 45;
+      return L.divIcon({
+        className: "plane-icon",
+        html: `<div style="transform:rotate(${rot}deg)">✈️</div>`,
+        iconSize: [22, 22],
+      });
+    }
+
+    // Calcula el punto destino tras avanzar distM metros con un rumbo dado
+    function destPoint(lat, lon, headingDeg, distM) {
+      const R = 6371000;
+      const d = distM / R;
+      const t = headingDeg * Math.PI / 180;
+      const f1 = lat * Math.PI / 180, l1 = lon * Math.PI / 180;
+      const f2 = Math.asin(Math.sin(f1) * Math.cos(d) + Math.cos(f1) * Math.sin(d) * Math.cos(t));
+      const l2 = l1 + Math.atan2(Math.sin(t) * Math.sin(d) * Math.cos(f1), Math.cos(d) - Math.sin(f1) * Math.sin(f2));
+      return [f2 * 180 / Math.PI, l2 * 180 / Math.PI];
+    }
+
+    function stopLive() {
+      if (animTimer) { clearInterval(animTimer); animTimer = null; }
+      if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+      liveState = null;
+    }
+
+    // Arranca el seguimiento: mueve el avión cada segundo y corrige cada 2 min
+    function startLive(f, flightNum) {
+      const pos = getLatLon(f.location);
+      if (!pos || !planeMarker) return;
+      liveState = {
+        lat: pos[0], lon: pos[1],
+        speedMps: (f.location?.groundSpeed?.kt || 0) * 0.514444, // nudos -> m/s
+        heading: f.location?.trueTrack?.deg ?? 45,
+        last: Date.now(),
+      };
+      animTimer = setInterval(stepLive, 1000);
+      refreshTimer = setInterval(() => refreshLive(flightNum), REFRESH_MS);
+    }
+
+    // Avance interpolado (sin llamar a la API)
+    function stepLive() {
+      if (!liveState || !planeMarker) return;
+      const now = Date.now();
+      const dt = (now - liveState.last) / 1000;
+      liveState.last = now;
+      const [lat, lon] = destPoint(liveState.lat, liveState.lon, liveState.heading, liveState.speedMps * dt);
+      liveState.lat = lat; liveState.lon = lon;
+      planeMarker.setLatLng([lat, lon]);
+    }
+
+    // Corrección con la posición real de la API
+    async function refreshLive(flightNum) {
+      try {
+        const res = await fetch(`/api/flight?flight=${encodeURIComponent(flightNum)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : [data];
+        const live = list.find((x) => getLatLon(x.location));
+        if (!live) { stopLive(); return; } // ya aterrizó
+        const pos = getLatLon(live.location);
+        liveState.lat = pos[0]; liveState.lon = pos[1];
+        liveState.speedMps = (live.location?.groundSpeed?.kt || 0) * 0.514444;
+        liveState.heading = live.location?.trueTrack?.deg ?? liveState.heading;
+        liveState.last = Date.now();
+        planeMarker.setLatLng(pos);
+        planeMarker.setIcon(planeIcon(liveState.heading));
+      } catch { /* si falla una corrección, sigue interpolando */ }
+    }
+
     function drawMap(f, mapDiv) {
       const dep = f.departure?.airport;
       const arr = f.arrival?.airport;
@@ -185,14 +258,9 @@
         mapLayers.push(L.polyline([depPos, arrPos], { color: "#64748b", weight: 2, dashArray: "6 8" }).addTo(map));
       }
       if (livePos) {
-        // El emoji ✈️ apunta al NE (~45°); lo roto para que mire al rumbo real
-        const deg = (f.location?.trueTrack?.deg ?? 45) - 45;
-        const icon = L.divIcon({
-          className: "plane-icon",
-          html: `<div style="transform:rotate(${deg}deg)">✈️</div>`,
-          iconSize: [22, 22],
-        });
-        mapLayers.push(L.marker(livePos, { icon }).bindTooltip("En vuelo").addTo(map));
+        const deg = f.location?.trueTrack?.deg ?? 45;
+        planeMarker = L.marker(livePos, { icon: planeIcon(deg) }).bindTooltip("En vuelo").addTo(map);
+        mapLayers.push(planeMarker);
         pts.push(livePos);
       }
 
@@ -266,7 +334,8 @@
       const flight = airline + num;
       result.innerHTML = `<p class="msg">Buscando ${flight}...</p>`;
       $("go").disabled = true;
-      map = null; mapLayers = [];
+      stopLive();
+      map = null; mapLayers = []; planeMarker = null;
 
       try {
         const res = await fetch(`/api/flight?flight=${encodeURIComponent(flight)}`);
@@ -282,6 +351,7 @@
 
         result.innerHTML = "";
         list.forEach((f, i) => render(f, i === 0));
+        if (getLatLon(list[0].location)) startLive(list[0], flight);
       } catch (err) {
         result.innerHTML = `<p class="msg error">${err.message}</p>`;
       } finally {
