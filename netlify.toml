@@ -1,0 +1,12 @@
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+# Redirección cómoda: /api/flight -> la función
+[[redirects]]
+  from = "/api/flight"
+  to = "/.netlify/functions/flight"
+  status = 200
