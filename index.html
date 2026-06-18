@@ -84,6 +84,16 @@
 
     .msg { margin-top: 20px; color: var(--muted); }
     .error { color: var(--red); }
+
+    .alertbox { margin-top: 18px; padding: 16px; background: var(--card2); border-radius: 10px; }
+    .alert-title { font-weight: 600; margin-bottom: 4px; }
+    .alert-sub { color: var(--muted); font-size: 0.8rem; margin-bottom: 12px; }
+    .alertbox input[type=email] { width: 100%; margin-bottom: 12px; }
+    .al-evs { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 12px; }
+    .al-ev { display: inline-flex; align-items: center; gap: 6px; font-size: 0.88rem; color: var(--text); cursor: pointer; }
+    .al-msg { margin-top: 10px; font-size: 0.85rem; min-height: 1em; }
+    .al-msg.ok { color: var(--green); }
+    .al-msg.error { color: var(--red); }
   </style>
 </head>
 <body>
@@ -106,6 +116,7 @@
     const $ = (id) => document.getElementById(id);
     const result = $("result");
     let map, mapLayers = [];
+    let currentFlightNum = "";
     let planeMarker = null, liveState = null, animTimer = null, refreshTimer = null;
     const REFRESH_MS = 120000; // corrige con la posición real cada 2 min (cuida la cuota)
 
@@ -323,7 +334,55 @@
         mapDiv.id = "map";
         slot.appendChild(mapDiv);
         drawMap(f, mapDiv);
+        attachAlertBox(card, f);
       }
+    }
+
+    // Bloque "Avisarme por email" — registra el vuelo en el backend
+    function attachAlertBox(card, f) {
+      const depDate = (f.departure?.scheduledTime?.local || "").slice(0, 10); // YYYY-MM-DD
+      const box = document.createElement("div");
+      box.className = "alertbox";
+      box.innerHTML = `
+        <div class="alert-title">🔔 Avisarme por email</div>
+        <div class="alert-sub">Te mandamos un mail cuando pase lo que elijas. Funciona aunque cierres la web.</div>
+        <input type="email" class="al-email" placeholder="tu@email.com" />
+        <div class="al-evs">
+          <label class="al-ev"><input type="checkbox" value="departure" checked> Despegue</label>
+          <label class="al-ev"><input type="checkbox" value="arrival" checked> Aterrizaje</label>
+          <label class="al-ev"><input type="checkbox" value="changes" checked> Demoras / cambios</label>
+        </div>
+        <button class="al-go">Avisarme</button>
+        <div class="al-msg"></div>`;
+      card.appendChild(box);
+
+      const btn = box.querySelector(".al-go");
+      const msg = box.querySelector(".al-msg");
+      btn.addEventListener("click", async () => {
+        const email = box.querySelector(".al-email").value.trim();
+        const events = [...box.querySelectorAll(".al-ev input:checked")].map((c) => c.value);
+        if (!email) { msg.textContent = "Poné tu email."; msg.className = "al-msg error"; return; }
+        if (!events.length) { msg.textContent = "Elegí al menos un evento."; msg.className = "al-msg error"; return; }
+
+        btn.disabled = true;
+        msg.textContent = "Guardando..."; msg.className = "al-msg";
+        try {
+          const res = await fetch("/api/watch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ flight: currentFlightNum, date: depDate, email, events }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Error " + res.status);
+          msg.textContent = "✅ " + (data.message || "Listo, te avisamos.");
+          msg.className = "al-msg ok";
+        } catch (e) {
+          msg.textContent = e.message;
+          msg.className = "al-msg error";
+        } finally {
+          btn.disabled = false;
+        }
+      });
     }
 
     async function search() {
@@ -332,6 +391,7 @@
       if (!airline || !num) { result.innerHTML = `<p class="msg error">Completá aerolínea y número.</p>`; return; }
 
       const flight = airline + num;
+      currentFlightNum = flight;
       result.innerHTML = `<p class="msg">Buscando ${flight}...</p>`;
       $("go").disabled = true;
       stopLive();

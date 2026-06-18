@@ -5,8 +5,13 @@
 [functions]
   node_bundler = "esbuild"
 
-# Redirección cómoda: /api/flight -> la función
+# Redirecciones cómodas hacia las funciones
 [[redirects]]
   from = "/api/flight"
   to = "/.netlify/functions/flight"
+  status = 200
+
+[[redirects]]
+  from = "/api/watch"
+  to = "/.netlify/functions/watch"
   status = 200

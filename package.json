@@ -1,0 +1,9 @@
+{
+  "name": "te-sigo-de-viaje",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Webapp de info de vuelos con seguimiento en vivo y alertas por email",
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0"
+  }
+}
