@@ -4,6 +4,16 @@ export default async () => {
   const token = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
   if (!token) return json(500, { error: "Falta TELEGRAM_BOT_TOKEN en el servidor." });
 
+  // Validar el token con getMe (da un error más claro que getUpdates)
+  const me = await (await fetch(`https://api.telegram.org/bot${token}/getMe`)).json();
+  if (!me.ok) {
+    return json(502, {
+      error: `Telegram rechazó el token: "${me.description || "?"}". ` +
+        `El servidor leyó un token de ${token.length} caracteres que empieza con "${token.slice(0, 6)}". ` +
+        `Si eso no coincide con tu bot, el valor en Netlify está mal.`,
+    });
+  }
+
   const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates`);
   const data = await res.json();
   if (!data.ok) return json(502, { error: "Telegram: " + (data.description || "error") });
