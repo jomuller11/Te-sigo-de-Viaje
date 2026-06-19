@@ -5,6 +5,17 @@
 [functions]
   node_bundler = "esbuild"
 
+# Evita que el navegador sirva un index.html viejo cacheado
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
 # Redirecciones cómodas hacia las funciones
 [[redirects]]
   from = "/api/flight"
