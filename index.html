@@ -120,6 +120,7 @@
     let map, mapLayers = [];
     let currentFlightNum = "";
     let planeMarker = null, liveState = null, animTimer = null, refreshTimer = null;
+    let trailLine = null, trailPts = [];
     const REFRESH_MS = 120000; // corrige con la posición real cada 2 min (cuida la cuota)
 
     function statusColor(s) {
@@ -175,6 +176,27 @@
       });
     }
 
+    // Puntos intermedios de la curva de gran círculo entre dos coordenadas
+    function greatCircle(a, b, n = 64) {
+      const lat1 = a[0] * Math.PI / 180, lon1 = a[1] * Math.PI / 180;
+      const lat2 = b[0] * Math.PI / 180, lon2 = b[1] * Math.PI / 180;
+      const d = 2 * Math.asin(Math.sqrt(
+        Math.sin((lat2 - lat1) / 2) ** 2 +
+        Math.cos(lat1) * Math.cos(lat2) * Math.sin((lon2 - lon1) / 2) ** 2));
+      if (!d) return [a, b];
+      const pts = [];
+      for (let i = 0; i <= n; i++) {
+        const f = i / n;
+        const A = Math.sin((1 - f) * d) / Math.sin(d);
+        const B = Math.sin(f * d) / Math.sin(d);
+        const x = A * Math.cos(lat1) * Math.cos(lon1) + B * Math.cos(lat2) * Math.cos(lon2);
+        const y = A * Math.cos(lat1) * Math.sin(lon1) + B * Math.cos(lat2) * Math.sin(lon2);
+        const z = A * Math.sin(lat1) + B * Math.sin(lat2);
+        pts.push([Math.atan2(z, Math.hypot(x, y)) * 180 / Math.PI, Math.atan2(y, x) * 180 / Math.PI]);
+      }
+      return pts;
+    }
+
     // Calcula el punto destino tras avanzar distM metros con un rumbo dado
     function destPoint(lat, lon, headingDeg, distM) {
       const R = 6371000;
@@ -215,6 +237,7 @@
       const [lat, lon] = destPoint(liveState.lat, liveState.lon, liveState.heading, liveState.speedMps * dt);
       liveState.lat = lat; liveState.lon = lon;
       planeMarker.setLatLng([lat, lon]);
+      if (trailLine) { trailPts.push([lat, lon]); trailLine.setLatLngs(trailPts); }
     }
 
     // Corrección con la posición real de la API
@@ -268,11 +291,21 @@
         pts.push(arrPos);
       }
       if (depPos && arrPos) {
-        mapLayers.push(L.polyline([depPos, arrPos], { color: "#64748b", weight: 2, dashArray: "6 8" }).addTo(map));
+        // Trayecto completo (curva de gran círculo), tenue y punteado
+        mapLayers.push(L.polyline(greatCircle(depPos, arrPos), { color: "#64748b", weight: 2, dashArray: "6 8", opacity: 0.7 }).addTo(map));
       }
       if (livePos) {
+        // Parte ya volada (origen → avión) en sólido brillante
+        if (depPos) {
+          mapLayers.push(L.polyline(greatCircle(depPos, livePos), { color: "#38bdf8", weight: 3 }).addTo(map));
+        }
+        // Estela en vivo: rastro que va dejando el avión mientras se mueve
+        trailPts = [livePos];
+        trailLine = L.polyline(trailPts, { color: "#fbbf24", weight: 3 }).addTo(map);
+        mapLayers.push(trailLine);
+
         const deg = f.location?.trueTrack?.deg ?? 45;
-        planeMarker = L.marker(livePos, { icon: planeIcon(deg) }).bindTooltip("En vuelo").addTo(map);
+        planeMarker = L.marker(livePos, { icon: planeIcon(deg), zIndexOffset: 1000 }).bindTooltip("En vuelo").addTo(map);
         mapLayers.push(planeMarker);
         pts.push(livePos);
       }
@@ -424,7 +457,7 @@
       result.innerHTML = `<p class="msg">Buscando ${flight}...</p>`;
       $("go").disabled = true;
       stopLive();
-      map = null; mapLayers = []; planeMarker = null;
+      map = null; mapLayers = []; planeMarker = null; trailLine = null; trailPts = [];
 
       try {
         const res = await fetch(`/api/flight?flight=${encodeURIComponent(flight)}`);
