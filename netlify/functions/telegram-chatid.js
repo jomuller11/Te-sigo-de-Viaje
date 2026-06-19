@@ -1,7 +1,7 @@
 // Detecta el chat ID del usuario leyendo los últimos mensajes que recibió
 // el bot. El usuario abre su bot, aprieta Start y llama a este endpoint.
 export default async () => {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const token = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
   if (!token) return json(500, { error: "Falta TELEGRAM_BOT_TOKEN en el servidor." });
 
   const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates`);
