@@ -31,3 +31,8 @@
   from = "/api/telegram-chatid"
   to = "/.netlify/functions/telegram-chatid"
   status = 200
+
+[[redirects]]
+  from = "/api/position"
+  to = "/.netlify/functions/position"
+  status = 200

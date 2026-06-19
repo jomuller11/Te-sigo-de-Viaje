@@ -447,6 +447,29 @@
       });
     }
 
+    // Si una pata está volando pero sin posición, la busca en OpenSky por modeS (ICAO24)
+    async function addLivePositionIfMissing(list) {
+      const leg = list.find((f) =>
+        !getLatLon(f.location) &&
+        /(enroute|departed|airborne|approach)/i.test(f.status || "") &&
+        f.aircraft?.modeS);
+      if (!leg) return;
+      try {
+        const res = await fetch(`/api/position?icao24=${encodeURIComponent(leg.aircraft.modeS)}`);
+        if (!res.ok) return;
+        const p = await res.json();
+        if (!p.found || typeof p.lat !== "number" || typeof p.lon !== "number") return;
+        leg.location = {
+          lat: p.lat,
+          lon: p.lon,
+          trueTrack: { deg: p.track ?? 45 },
+          groundSpeed: { kt: p.speed != null ? p.speed * 1.94384 : 0, kmPerHour: p.speed != null ? p.speed * 3.6 : 0 },
+          altitude: { feet: p.alt != null ? p.alt * 3.28084 : 0 },
+          source: "opensky",
+        };
+      } catch { /* sin fallback: simplemente no se muestra el avión */ }
+    }
+
     async function search() {
       const airline = $("airline").value.trim().toUpperCase();
       const num = $("number").value.trim();
@@ -467,6 +490,9 @@
 
         const list = Array.isArray(data) ? data : [data];
         if (!list.length) { result.innerHTML = `<p class="msg">Sin resultados para ${flight}.</p>`; return; }
+
+        // Si está volando pero AeroDataBox no trae la posición, la pedimos a OpenSky
+        await addLivePositionIfMissing(list);
 
         // El vuelo más relevante (en vuelo / próximo) va primero; los pasados después
         list.sort((a, b) => relevance(a) - relevance(b) || timeDist(a) - timeDist(b));
